@@ -10,23 +10,23 @@ dotenv.config();
 async function startServer() {
   const app = express();
   const httpServer = createServer(app);
-  
-  // Use our structured backend app for all /api routes
+
+  // Use backend routes
   app.use(backendApp);
 
   const io = new Server(httpServer, {
     cors: {
       origin: "*",
-      methods: ["GET", "POST"]
-    }
+      methods: ["GET", "POST"],
+    },
   });
 
-  const PORT = process.env.PORT || 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // MongoDB Connection
   await connectToDb();
 
-  // Socket.io logic
+  // Socket.io
   io.on("connection", (socket) => {
     console.log("Client connected:", socket.id);
 
@@ -54,7 +54,7 @@ async function startServer() {
   });
 
   httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`Backend server running on http://localhost:${PORT}`);
+    console.log(`Backend server running on port ${PORT}`);
   });
 }
 
