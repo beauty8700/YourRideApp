@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Power, MapPin, Navigation, DollarSign, Star, TrendingUp, Bell, MessageSquare, Menu, X, Check, XCircle } from 'lucide-react';
 import MapComponent from '../components/MapComponent';
 import { DriverDataContext } from '../context/DriverContext';
-import axios from 'axios';
 import { toast } from 'sonner';
 import { initializeSocket, receiveMessage, sendMessage } from '../services/socketService';
 

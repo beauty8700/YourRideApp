@@ -1,46 +1,61 @@
-import http from 'http';
-import app from './app.js';
-import { Server } from 'socket.io';
-import connectToDb from './config/db.js';
+import express from "express";
+import { createServer } from "http";
+import { Server } from "socket.io";
+import dotenv from "dotenv";
+import connectToDb from "./config/db.js";
+import backendApp from "./app.js";
 
-const server = http.createServer(app);
+dotenv.config();
 
-export const io = new Server(server, {
+async function startServer() {
+  const app = express();
+  const httpServer = createServer(app);
+  
+  // Use our structured backend app for all /api routes
+  app.use(backendApp);
+
+  const io = new Server(httpServer, {
     cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
+      origin: "*",
+      methods: ["GET", "POST"]
     }
-});
+  });
 
-io.on('connection', (socket) => {
-    console.log('Client connected:', socket.id);
+  const PORT = process.env.PORT || 3000;
 
-    socket.on('join', (data) => {
-        if (data.userType === 'user') {
-            socket.join(`user-${data.userId}`);
-        } else if (data.userType === 'driver') {
-            socket.join(`driver-${data.driverId}`);
-        }
+  // MongoDB Connection
+  await connectToDb();
+
+  // Socket.io logic
+  io.on("connection", (socket) => {
+    console.log("Client connected:", socket.id);
+
+    socket.on("join", (data) => {
+      socket.join(data.userId || data.driverId);
     });
 
-    socket.on('update-location-driver', (data) => {
-        // Broadcast location to specific user if ride is ongoing
-        if (data.rideId) {
-            io.to(`user-${data.userId}`).emit('driver-location', data);
-        }
+    socket.on("ride-request", (data) => {
+      io.emit("new-ride-request", { ...data, socketId: socket.id });
     });
 
-    socket.on('disconnect', () => {
-        console.log('Client disconnected:', socket.id);
+    socket.on("accept-ride", (data) => {
+      io.to(data.userSocketId).emit("ride-accepted", data);
     });
-});
 
-const start = (port: number) => {
-    connectToDb();
-    server.listen(port, "0.0.0.0", () => {
-        console.log(`Backend server running on port ${port}`);
+    socket.on("update-location", (data) => {
+      if (data.rideId) {
+        socket.broadcast.emit("driver-location-update", data);
+      }
     });
-    return server;
+
+    socket.on("disconnect", () => {
+      console.log("Client disconnected:", socket.id);
+    });
+  });
+
+  httpServer.listen(PORT, "0.0.0.0", () => {
+    console.log(`Backend server running on http://localhost:${PORT}`);
+  });
 }
 
-export default start;
+startServer();

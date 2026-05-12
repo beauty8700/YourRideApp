@@ -4,8 +4,9 @@ let socket: Socket | null = null;
 
 export const initializeSocket = (userId: string) => {
     if (!socket) {
-        // The socket should connect to the same host that serves the page
-        socket = io();
+        // Connect to backend server
+        const backendUrl = import.meta.env.VITE_API_BASE_URL?.replace('/api', '') || 'http://localhost:3000';
+        socket = io(backendUrl);
 
         socket.on('connect', () => {
             console.log('Connected to socket server');

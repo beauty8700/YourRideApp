@@ -1,6 +1,6 @@
 import React, { useState, useContext } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { api } from '../lib/utils';
 import { UserDataContext } from '../context/UserContext';
 import { motion } from 'motion/react';
 import { User, Mail, Lock, Loader2 } from 'lucide-react';
@@ -29,7 +29,7 @@ const UserSignup = () => {
                 password: password
             };
 
-            const response = await axios.post('/api/users/register', newUser);
+            const response = await api.post('/users/register', newUser);
 
             if (response.status === 201) {
                 const data = response.data;

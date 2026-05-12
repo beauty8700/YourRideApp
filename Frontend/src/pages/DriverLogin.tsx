@@ -1,6 +1,6 @@
 import React, { useState, useContext } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { api } from '../lib/utils';
 import { DriverDataContext } from '../context/DriverContext';
 import { motion } from 'motion/react';
 import { Mail, Lock, Loader2, Car } from 'lucide-react';
@@ -18,7 +18,7 @@ const DriverLogin = () => {
         e.preventDefault();
         setLoading(true);
         try {
-            const response = await axios.post('/api/drivers/login', { email, password });
+            const response = await api.post('/drivers/login', { email, password });
             if (response.status === 200) {
                 const data = response.data;
                 setDriver(data.driver);

@@ -1,6 +1,6 @@
 import React, { useState, useContext } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { api } from '../lib/utils';
 import { DriverDataContext } from '../context/DriverContext';
 import { motion } from 'motion/react';
 import { User, Mail, Lock, Car, Loader2, Palette, Hash, Users } from 'lucide-react';
@@ -39,7 +39,7 @@ const DriverSignup = () => {
                 }
             };
 
-            const response = await axios.post('/api/drivers/register', driverData);
+            const response = await api.post('/drivers/register', driverData);
 
             if (response.status === 201) {
                 const data = response.data;
