@@ -1,0 +1,11 @@
+{
+  "name": "YourRide",
+  "description": "A premium, production-level full-stack ride-booking application with real-time tracking, live driver updates, and a seamless booking experience.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "realtime",
+    "maps"
+  ]
+}
