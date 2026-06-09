@@ -2,6 +2,7 @@ import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import dotenv from "dotenv";
+
 import connectToDb from "./config/db.js";
 import backendApp from "./app.js";
 
@@ -11,22 +12,20 @@ async function startServer() {
   const app = express();
   const httpServer = createServer(app);
 
-  // Use backend routes
   app.use(backendApp);
 
   const io = new Server(httpServer, {
     cors: {
-      origin: "*",
-      methods: ["GET", "POST"],
+      origin: true,
+      credentials: true,
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     },
   });
 
   const PORT = Number(process.env.PORT) || 3000;
 
-  // MongoDB Connection
   await connectToDb();
 
-  // Socket.io
   io.on("connection", (socket) => {
     console.log("Client connected:", socket.id);
 
@@ -35,7 +34,10 @@ async function startServer() {
     });
 
     socket.on("ride-request", (data) => {
-      io.emit("new-ride-request", { ...data, socketId: socket.id });
+      io.emit("new-ride-request", {
+        ...data,
+        socketId: socket.id,
+      });
     });
 
     socket.on("accept-ride", (data) => {
@@ -58,4 +60,6 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error("Server startup failed:", err);
+});
