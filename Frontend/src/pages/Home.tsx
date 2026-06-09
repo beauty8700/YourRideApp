@@ -4,9 +4,10 @@ import { Search, MapPin, Navigation, History, Star, Wallet, Bell, Menu, X, Clock
 import MapComponent from '../components/MapComponent';
 import { UserDataContext } from '../context/UserContext';
 import axios from 'axios';
+import { api } from '../lib/utils';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
-import { initializeSocket, receiveMessage, sendMessage } from '../services/socketService';
+import { initializeSocket, receiveMessage, sendMessage, stopReceivingMessage } from '../services/socketService';
 
 const Home = () => {
     const { user } = useContext(UserDataContext);
@@ -24,6 +25,10 @@ const Home = () => {
     const [ rideOtp, setRideOtp ] = useState<string>('');
     const [ showOtpScreen, setShowOtpScreen ] = useState(false);
     const [ noDriverFound, setNoDriverFound ] = useState(false);
+    const [ selectedVehicle, setSelectedVehicle ] = useState<'bike' | 'auto' | 'mini' | 'sedan'>('mini');
+    const [ currentRide, setCurrentRide ] = useState<any>(null);
+    const [ estimatedDistance, setEstimatedDistance ] = useState(0);
+    const [ estimatedDuration, setEstimatedDuration ] = useState(0);
     
     // Search states
     const [ suggestions, setSuggestions ] = useState<any[]>([]);
@@ -33,22 +38,117 @@ const Home = () => {
     const [ destinationCoords, setDestinationCoords ] = useState<[number, number] | undefined>(undefined);
     const searchTimeout = useRef<NodeJS.Timeout | null>(null);
 
+    const toRadians = (value: number) => value * (Math.PI / 180);
+    const haversineKm = (a: [number, number], b: [number, number]) => {
+        const R = 6371;
+        const dLat = toRadians(b[0] - a[0]);
+        const dLon = toRadians(b[1] - a[1]);
+        const lat1 = toRadians(a[0]);
+        const lat2 = toRadians(b[0]);
+
+        const x = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+            + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const y = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+        return R * y;
+    };
+
+    const vehicleMultiplier: Record<'bike' | 'auto' | 'mini' | 'sedan', number> = {
+        bike: 0.8,
+        auto: 1,
+        mini: 1.3,
+        sedan: 1.8
+    };
+
+    const getFareForVehicle = (vehicle: 'bike' | 'auto' | 'mini' | 'sedan') => {
+        const base = 25;
+        const perKm = 12;
+        const fare = base + (estimatedDistance * perKm * vehicleMultiplier[vehicle]);
+        return Number(fare.toFixed(2));
+    };
+
+    useEffect(() => {
+        if (!pickupCoords || !destinationCoords) {
+            setEstimatedDistance(0);
+            setEstimatedDuration(0);
+            return;
+        }
+
+        const distance = haversineKm(pickupCoords, destinationCoords);
+        setEstimatedDistance(Number(distance.toFixed(2)));
+
+        const avgCitySpeedKmPerMin = 0.5;
+        setEstimatedDuration(Math.max(5, Math.round(distance / avgCitySpeedKmPerMin)));
+    }, [pickupCoords, destinationCoords]);
+
     useEffect(() => {
         if (user?._id) {
-            initializeSocket(user._id);
+            initializeSocket(user._id, 'user');
 
-            receiveMessage('ride-accepted', (data) => {
+            const onRideAccepted = (data: any) => {
+                if (currentRide?._id && data.rideId && String(data.rideId) !== String(currentRide._id)) {
+                    return;
+                }
+
                 setLookingForDriver(false);
                 setWaitingForDriver(true);
                 setAssignedDriver(data.driver);
                 toast.success(`Driver ${data.driver.fullname.firstname} is on the way!`);
-            });
+            };
 
-            receiveMessage('driver-location-update', (data) => {
+            const onDriverLocation = (data: any) => {
+                if (currentRide?._id && data.rideId && String(data.rideId) !== String(currentRide._id)) {
+                    return;
+                }
+
                 setDriverLocation(data.coords);
-            });
+            };
+
+            const onRideCancelled = (data: any) => {
+                if (currentRide?._id && data.rideId && String(data.rideId) !== String(currentRide._id)) {
+                    return;
+                }
+
+                toast.error(data.message || 'Ride was cancelled');
+                setWaitingForDriver(false);
+                setLookingForDriver(false);
+                setAssignedDriver(null);
+                setCurrentRide(null);
+                setRideOtp('');
+            };
+
+            const onRideStarted = (data: any) => {
+                if (currentRide?._id && data.rideId && String(data.rideId) !== String(currentRide._id)) {
+                    return;
+                }
+                toast.success('Ride has started. Have a safe trip!');
+            };
+
+            const onRideCompleted = (data: any) => {
+                if (currentRide?._id && data.rideId && String(data.rideId) !== String(currentRide._id)) {
+                    return;
+                }
+                toast.success('Ride completed successfully');
+                setWaitingForDriver(false);
+                setAssignedDriver(null);
+                setCurrentRide(null);
+                setRideOtp('');
+            };
+
+            receiveMessage('ride-accepted', onRideAccepted);
+            receiveMessage('driver-location-update', onDriverLocation);
+            receiveMessage('ride-cancelled', onRideCancelled);
+            receiveMessage('ride-started', onRideStarted);
+            receiveMessage('ride-completed', onRideCompleted);
+
+            return () => {
+                stopReceivingMessage('ride-accepted', onRideAccepted);
+                stopReceivingMessage('driver-location-update', onDriverLocation);
+                stopReceivingMessage('ride-cancelled', onRideCancelled);
+                stopReceivingMessage('ride-started', onRideStarted);
+                stopReceivingMessage('ride-completed', onRideCompleted);
+            };
         }
-    }, [user]);
+    }, [user, currentRide]);
 
     const fetchSuggestions = async (query: string) => {
         if (!query || query.length < 3) {
@@ -122,40 +222,75 @@ const Home = () => {
         setVehiclePanel(true);
     };
 
-    const startFindingDriver = () => {
-        setLookingForDriver(true);
-        setConfirmRidePanel(false);
-        setNoDriverFound(false);
+    const startFindingDriver = async () => {
+        if (!pickup || !destination || !pickupCoords || !destinationCoords) {
+            toast.error('Pickup and destination are required');
+            return;
+        }
 
-        sendMessage('ride-request', {
-            userId: user?._id,
-            user: {
-                name: user?.fullname?.firstname + ' ' + user?.fullname?.lastname,
-                rating: '4.8'
-            },
-            pickup,
-            destination,
-            pickupCoords,
-            destinationCoords,
-            fare: 115.00
-        });
+        try {
+            const fare = getFareForVehicle(selectedVehicle);
+            const response = await api.post('/rides/create', {
+                pickup,
+                destination,
+                fare,
+                vehicleType: selectedVehicle,
+                distance: estimatedDistance,
+                duration: estimatedDuration,
+            });
 
-        // Simulating "No Driver Found" timeout for UX
-        setTimeout(() => {
-            if (!assignedDriver) {
-                // We'll keep it simple for now, but a real app would check server response
-                // setNoDriverFound(true);
-                // setLookingForDriver(false);
-            }
-        }, 15000);
+            const ride = response.data;
+            setCurrentRide(ride);
+            setRideOtp(ride?.otp || '');
+            setLookingForDriver(true);
+            setConfirmRidePanel(false);
+            setNoDriverFound(false);
+
+            sendMessage('ride-request', {
+                rideId: ride._id,
+                userId: user?._id,
+                user: {
+                    name: `${user?.fullname?.firstname || ''} ${user?.fullname?.lastname || ''}`.trim(),
+                    rating: '4.8'
+                },
+                pickup,
+                destination,
+                pickupCoords,
+                destinationCoords,
+                fare,
+                vehicleType: selectedVehicle,
+            });
+        } catch (error: any) {
+            toast.error(error?.response?.data?.message || 'Unable to create ride request');
+        }
     };
 
-    const handleOtpSubmission = (otp: string) => {
-        if (otp === "123456" || otp === rideOtp) {
-            toast.success("OTP Verified! Enjoy your ride.");
-            setShowOtpScreen(false);
-        } else {
-            toast.error("Invalid OTP. Please check with your captain.");
+    const cancelCurrentRide = async () => {
+        if (!currentRide?._id) {
+            setLookingForDriver(false);
+            return;
+        }
+
+        try {
+            const response = await api.post('/rides/cancel', {
+                rideId: currentRide._id,
+                reason: 'Cancelled from user app before pickup'
+            });
+
+            sendMessage('ride-cancelled', {
+                rideId: currentRide._id,
+                userId: user?._id,
+                driverId: response.data?.driver,
+                message: 'Rider cancelled the trip'
+            });
+
+            setLookingForDriver(false);
+            setWaitingForDriver(false);
+            setAssignedDriver(null);
+            setCurrentRide(null);
+            toast.success('Ride request cancelled');
+        } catch (error: any) {
+            toast.error(error?.response?.data?.message || 'Unable to cancel ride');
         }
     };
 
@@ -509,17 +644,20 @@ const Home = () => {
 
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                             {[
-                                { id: 'bike', icon: '🚲', name: 'Moto', price: 42.50, eta: '2 min', desc: 'Saves time' },
-                                { id: 'auto', icon: '🛺', name: 'Auto', price: 68.20, eta: '4 min', desc: 'Pocket-friendly' },
-                                { id: 'mini', icon: '🚗', name: 'Mini', price: 115.00, eta: '5 min', recommended: true, desc: 'AC Comfort' },
-                                { id: 'sedan', icon: '🚘', name: 'Sedan', price: 182.40, eta: '3 min', desc: 'Premium luxury' },
+                                { id: 'bike', icon: '🚲', name: 'Moto', price: getFareForVehicle('bike'), eta: '2 min', desc: 'Saves time' },
+                                { id: 'auto', icon: '🛺', name: 'Auto', price: getFareForVehicle('auto'), eta: '4 min', desc: 'Pocket-friendly' },
+                                { id: 'mini', icon: '🚗', name: 'Mini', price: getFareForVehicle('mini'), eta: '5 min', recommended: true, desc: 'AC Comfort' },
+                                { id: 'sedan', icon: '🚘', name: 'Sedan', price: getFareForVehicle('sedan'), eta: '3 min', desc: 'Premium luxury' },
                             ].map((v) => (
                                 <motion.div 
                                     key={v.id}
                                     whileHover={{ scale: 1.02 }}
                                     whileTap={{ scale: 0.98 }}
-                                    onClick={() => setConfirmRidePanel(true)}
-                                    className={`relative p-5 rounded-[32px] border-2 transition-all cursor-pointer group ${v.recommended ? 'bg-white border-blue-500 shadow-xl shadow-blue-500/10' : 'bg-slate-50/50 border-slate-50 hover:border-slate-200 hover:bg-white'}`}
+                                    onClick={() => {
+                                        setSelectedVehicle(v.id as 'bike' | 'auto' | 'mini' | 'sedan');
+                                        setConfirmRidePanel(true);
+                                    }}
+                                    className={`relative p-5 rounded-[32px] border-2 transition-all cursor-pointer group ${selectedVehicle === v.id ? 'bg-white border-blue-500 shadow-xl shadow-blue-500/10' : 'bg-slate-50/50 border-slate-50 hover:border-slate-200 hover:bg-white'}`}
                                 >
                                     {v.recommended && (
                                         <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-500 text-[8px] font-black uppercase text-white px-3 py-1 rounded-full whitespace-nowrap tracking-widest shadow-lg">Most popular</div>
@@ -600,6 +738,11 @@ const Home = () => {
                                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Destination</p>
                                     <p className="text-sm font-bold text-slate-700 truncate leading-relaxed">{destination}</p>
                                 </div>
+                                <div className="p-5 rounded-3xl bg-slate-50 border border-slate-100 relative overflow-hidden">
+                                    <div className="absolute top-0 left-0 w-1.5 h-full bg-emerald-500"></div>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Trip Estimate</p>
+                                    <p className="text-sm font-bold text-slate-700 truncate leading-relaxed">{estimatedDistance.toFixed(1)} km • {estimatedDuration} mins • ${getFareForVehicle(selectedVehicle).toFixed(2)}</p>
+                                </div>
                             </div>
 
                             <div className="flex gap-4">
@@ -647,7 +790,7 @@ const Home = () => {
                         <p className="text-slate-500 font-medium mb-10 leading-relaxed px-4">We're searching for the best nearby partner to pick you up in minutes.</p>
                         
                         <button 
-                            onClick={() => setLookingForDriver(false)}
+                            onClick={cancelCurrentRide}
                             className="w-full py-5 rounded-3xl border-2 border-rose-100 bg-rose-50 text-rose-600 font-black uppercase tracking-widest hover:bg-rose-100 hover:border-rose-200 transition-all shadow-sm active:scale-95"
                         >
                             Cancel Request
@@ -689,7 +832,7 @@ const Home = () => {
                                 <h4 className="text-xl font-black text-slate-900 uppercase leading-none">{assignedDriver.fullname.firstname} {assignedDriver.fullname.lastname}</h4>
                                 <div className="flex items-center gap-2 mt-2">
                                     <span className="px-2 py-1 bg-slate-900 text-white text-[10px] font-black rounded-md">{assignedDriver.vehicle.plate || 'ABC-1234'}</span>
-                                    <span className="text-xs font-bold text-slate-400 truncate">{assignedDriver.vehicle.color} {assignedDriver.vehicle.type}</span>
+                                    <span className="text-xs font-bold text-slate-400 truncate">{assignedDriver.vehicle.color} {assignedDriver.vehicle.vehicleType}</span>
                                 </div>
                             </div>
                         </div>
@@ -728,7 +871,7 @@ const Home = () => {
                             <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-8">Share this with your captain</p>
                             
                             <div className="bg-slate-50 border-2 border-slate-100 rounded-3xl py-6 mb-10">
-                                <span className="text-4xl font-black tracking-[0.2em] text-slate-900">729104</span>
+                                <span className="text-4xl font-black tracking-[0.2em] text-slate-900">{rideOtp || '------'}</span>
                             </div>
 
                             <button 

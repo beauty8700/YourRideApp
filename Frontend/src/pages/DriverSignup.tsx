@@ -34,7 +34,7 @@ const DriverSignup = () => {
                 vehicle: {
                     color: vehicleColor,
                     plate: vehiclePlate,
-                    capacity: vehicleCapacity,
+                    capacity: Number(vehicleCapacity),
                     vehicleType: vehicleType
                 }
             };

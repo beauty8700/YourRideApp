@@ -7,10 +7,12 @@ const driverSchema = new mongoose.Schema({
         firstname: {
             type: String,
             required: true,
+            trim: true,
             minlength: [3, 'First name must be at least 3 characters long'],
         },
         lastname: {
             type: String,
+            trim: true,
             minlength: [3, 'Last name must be at least 3 characters long'],
         }
     },
@@ -18,6 +20,8 @@ const driverSchema = new mongoose.Schema({
         type: String,
         required: true,
         unique: true,
+        trim: true,
+        lowercase: true,
         minlength: [5, 'Email must be at least 5 characters long'],
     },
     password: {
@@ -27,6 +31,7 @@ const driverSchema = new mongoose.Schema({
     },
     socketId: {
         type: String,
+        default: null,
     },
     status: {
         type: String,
@@ -37,11 +42,14 @@ const driverSchema = new mongoose.Schema({
         color: {
             type: String,
             required: true,
+            trim: true,
             minlength: [3, 'Color must be at least 3 characters long'],
         },
         plate: {
             type: String,
             required: true,
+            trim: true,
+            uppercase: true,
             minlength: [3, 'Plate must be at least 3 characters long'],
         },
         capacity: {
@@ -64,6 +72,7 @@ const driverSchema = new mongoose.Schema({
         }
     }
 }, { timestamps: true });
+driverSchema.index({ 'vehicle.plate': 1 }, { unique: true });
 
 driverSchema.methods.generateAuthToken = function () {
     const token = jwt.sign({ _id: this._id }, process.env.JWT_SECRET || 'secret-key', { expiresIn: '24h' });

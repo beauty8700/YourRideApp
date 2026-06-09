@@ -4,7 +4,8 @@ import { Power, MapPin, Navigation, DollarSign, Star, TrendingUp, Bell, MessageS
 import MapComponent from '../components/MapComponent';
 import { DriverDataContext } from '../context/DriverContext';
 import { toast } from 'sonner';
-import { initializeSocket, receiveMessage, sendMessage } from '../services/socketService';
+import { api } from '../lib/utils';
+import { initializeSocket, receiveMessage, sendMessage, stopReceivingMessage } from '../services/socketService';
 
 const DriverDashboard = () => {
     const { driver } = useContext(DriverDataContext);
@@ -15,14 +16,33 @@ const DriverDashboard = () => {
 
     useEffect(() => {
         if (driver?._id) {
-            initializeSocket(driver._id);
+            initializeSocket(driver._id, 'driver');
 
-            receiveMessage('new-ride-request', (data) => {
+            const onNewRideRequest = (data: any) => {
                 if (isOnline && !currentRideRequest && !activeRide) {
                     setCurrentRideRequest(data);
-                    toast.info("New ride request received!");
+                    toast.info('New ride request received!');
                 }
-            });
+            };
+
+            const onRideCancelled = (data: any) => {
+                if (activeRide?._id && data.rideId && String(data.rideId) !== String(activeRide._id)) {
+                    return;
+                }
+
+                setActiveRide(null);
+                setCurrentRideRequest(null);
+                setOtp('');
+                toast.error(data.message || 'Rider cancelled the trip');
+            };
+
+            receiveMessage('new-ride-request', onNewRideRequest);
+            receiveMessage('ride-cancelled', onRideCancelled);
+
+            return () => {
+                stopReceivingMessage('new-ride-request', onNewRideRequest);
+                stopReceivingMessage('ride-cancelled', onRideCancelled);
+            };
         }
     }, [driver, isOnline, currentRideRequest, activeRide]);
 
@@ -33,7 +53,7 @@ const DriverDashboard = () => {
                 if (navigator.geolocation) {
                     navigator.geolocation.getCurrentPosition((pos) => {
                         sendMessage('update-location', {
-                            rideId: activeRide.id,
+                            rideId: activeRide._id,
                             driverId: driver?._id,
                             coords: [pos.coords.latitude, pos.coords.longitude]
                         });
@@ -44,16 +64,30 @@ const DriverDashboard = () => {
         return () => clearInterval(locationInterval);
     }, [isOnline, activeRide, driver]);
 
-    const acceptRide = () => {
-        sendMessage('accept-ride', {
-            driverId: driver?._id,
-            driver: driver,
-            userSocketId: currentRideRequest.socketId,
-            rideId: currentRideRequest.id || 'RIDE_' + Date.now()
-        });
-        setActiveRide(currentRideRequest);
-        setCurrentRideRequest(null);
-        toast.success("Ride accepted. Head to pickup location.");
+    const acceptRide = async () => {
+        if (!currentRideRequest?.rideId) {
+            toast.error('Invalid ride request');
+            return;
+        }
+
+        try {
+            const response = await api.post('/rides/accept', { rideId: currentRideRequest.rideId });
+            const acceptedRide = response.data;
+
+            sendMessage('accept-ride', {
+                driverId: driver?._id,
+                driver: acceptedRide.driver,
+                userId: acceptedRide.user?._id,
+                userSocketId: currentRideRequest.socketId,
+                rideId: acceptedRide._id,
+            });
+
+            setActiveRide(acceptedRide);
+            setCurrentRideRequest(null);
+            toast.success('Ride accepted. Head to pickup location.');
+        } catch (error: any) {
+            toast.error(error?.response?.data?.message || 'Unable to accept ride');
+        }
     };
 
     const rejectRide = () => {
@@ -61,9 +95,32 @@ const DriverDashboard = () => {
         toast.error("Ride request rejected.");
     };
 
-    const completeRide = () => {
-        setActiveRide(null);
-        toast.success("Ride completed! Payment received.");
+    const completeRide = async () => {
+        if (!activeRide?._id) {
+            return;
+        }
+
+        try {
+            if (activeRide.status !== 'ongoing') {
+                await api.post('/rides/start-ride', { rideId: activeRide._id, otp });
+                sendMessage('ride-started', {
+                    rideId: activeRide._id,
+                    userId: activeRide.user?._id,
+                });
+            }
+
+            await api.post('/rides/complete', { rideId: activeRide._id });
+            sendMessage('ride-completed', {
+                rideId: activeRide._id,
+                userId: activeRide.user?._id,
+            });
+
+            setActiveRide(null);
+            setOtp('');
+            toast.success('Ride completed! Payment received.');
+        } catch (error: any) {
+            toast.error(error?.response?.data?.message || 'Unable to complete ride');
+        }
     };
 
     return (
@@ -120,15 +177,15 @@ const DriverDashboard = () => {
                                 <div className="flex items-center gap-4 mb-8">
                                     <div className="h-14 w-14 rounded-2xl bg-slate-50 flex items-center justify-center text-3xl border border-slate-100">👤</div>
                                     <div>
-                                        <h3 className="font-black text-slate-900 text-xl uppercase leading-none">{currentRideRequest.user.name}</h3>
+                                        <h3 className="font-black text-slate-900 text-xl uppercase leading-none">{currentRideRequest.user?.name || 'Rider'}</h3>
                                         <div className="flex items-center gap-2 text-amber-500 text-xs mt-1">
                                             <Star className="w-3 h-3 fill-amber-500" />
-                                            <span className="font-bold">{currentRideRequest.user.rating} Agent Rating</span>
+                                            <span className="font-bold">{currentRideRequest.user?.rating || '4.8'} Agent Rating</span>
                                         </div>
                                     </div>
                                     <div className="ml-auto text-right">
                                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Fare</p>
-                                        <p className="text-xl font-black text-emerald-600 leading-none">${currentRideRequest.fare.toFixed(2)}</p>
+                                        <p className="text-xl font-black text-emerald-600 leading-none">${Number(currentRideRequest.fare || 0).toFixed(2)}</p>
                                     </div>
                                 </div>
 
@@ -181,7 +238,7 @@ const DriverDashboard = () => {
                                             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                                             <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Ongoing Trip</p>
                                         </div>
-                                        <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight leading-tight">{activeRide.user.name}</h3>
+                                        <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tight leading-tight">{activeRide.user?.fullname?.firstname || activeRide.user?.name || 'Rider'}</h3>
                                         <p className="text-xs font-medium text-slate-500 mt-1 truncate max-w-xs">{activeRide.destination}</p>
                                     </div>
                                 </div>

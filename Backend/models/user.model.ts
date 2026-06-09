@@ -7,10 +7,12 @@ const userSchema = new mongoose.Schema({
         firstname: {
             type: String,
             required: true,
+            trim: true,
             minlength: [3, 'First name must be at least 3 characters long'],
         },
         lastname: {
             type: String,
+            trim: true,
             minlength: [3, 'Last name must be at least 3 characters long'],
         }
     },
@@ -18,6 +20,8 @@ const userSchema = new mongoose.Schema({
         type: String,
         required: true,
         unique: true,
+        trim: true,
+        lowercase: true,
         minlength: [5, 'Email must be at least 5 characters long'],
     },
     password: {
@@ -27,6 +31,7 @@ const userSchema = new mongoose.Schema({
     },
     socketId: {
         type: String,
+        default: null,
     },
     walletBalance: {
         type: Number,

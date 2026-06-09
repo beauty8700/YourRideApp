@@ -26,11 +26,29 @@ async function startServer() {
 
   await connectToDb();
 
+  const userSocketMap = new Map<string, string>();
+  const driverSocketMap = new Map<string, string>();
+
   io.on("connection", (socket) => {
     console.log("Client connected:", socket.id);
 
     socket.on("join", (data) => {
-      socket.join(data.userId || data.driverId);
+      const identityId = data.identityId || data.userId || data.driverId;
+      const role = data.role || (data.driverId ? "driver" : "user");
+
+      if (!identityId) {
+        return;
+      }
+
+      socket.data.identityId = identityId;
+      socket.data.role = role;
+      socket.join(identityId);
+
+      if (role === "driver") {
+        driverSocketMap.set(identityId, socket.id);
+      } else {
+        userSocketMap.set(identityId, socket.id);
+      }
     });
 
     socket.on("ride-request", (data) => {
@@ -41,7 +59,36 @@ async function startServer() {
     });
 
     socket.on("accept-ride", (data) => {
-      io.to(data.userSocketId).emit("ride-accepted", data);
+      if (data.userId && userSocketMap.get(data.userId)) {
+        io.to(userSocketMap.get(data.userId) as string).emit("ride-accepted", data);
+        return;
+      }
+
+      if (data.userSocketId) {
+        io.to(data.userSocketId).emit("ride-accepted", data);
+      }
+    });
+
+    socket.on("ride-cancelled", (data) => {
+      if (data.driverId && driverSocketMap.get(data.driverId)) {
+        io.to(driverSocketMap.get(data.driverId) as string).emit("ride-cancelled", data);
+      }
+
+      if (data.userId && userSocketMap.get(data.userId)) {
+        io.to(userSocketMap.get(data.userId) as string).emit("ride-cancelled", data);
+      }
+    });
+
+    socket.on("ride-started", (data) => {
+      if (data.userId && userSocketMap.get(data.userId)) {
+        io.to(userSocketMap.get(data.userId) as string).emit("ride-started", data);
+      }
+    });
+
+    socket.on("ride-completed", (data) => {
+      if (data.userId && userSocketMap.get(data.userId)) {
+        io.to(userSocketMap.get(data.userId) as string).emit("ride-completed", data);
+      }
     });
 
     socket.on("update-location", (data) => {
@@ -51,6 +98,14 @@ async function startServer() {
     });
 
     socket.on("disconnect", () => {
+      if (socket.data?.identityId && socket.data?.role === "driver") {
+        driverSocketMap.delete(socket.data.identityId);
+      }
+
+      if (socket.data?.identityId && socket.data?.role === "user") {
+        userSocketMap.delete(socket.data.identityId);
+      }
+
       console.log("Client disconnected:", socket.id);
     });
   });

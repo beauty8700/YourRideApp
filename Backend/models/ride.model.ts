@@ -22,6 +22,11 @@ const rideSchema = new mongoose.Schema({
         type: Number,
         required: true,
     },
+    vehicleType: {
+        type: String,
+        enum: ['bike', 'auto', 'mini', 'sedan'],
+        default: 'mini',
+    },
     status: {
         type: String,
         enum: ['pending', 'accepted', 'ongoing', 'completed', 'cancelled'],
@@ -32,6 +37,15 @@ const rideSchema = new mongoose.Schema({
     },
     distance: {
         type: Number,
+    },
+    cancelReason: {
+        type: String,
+    },
+    startedAt: {
+        type: Date,
+    },
+    completedAt: {
+        type: Date,
     },
     paymentId: {
         type: String,
